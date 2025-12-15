@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Top Down Shooter</title>
+    <style>
+      body {
+        margin: 0;
+        overflow: hidden;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+      }
+      canvas {
+        display: block;
+      }
+
+      /* Top-left HP UI */
+      #ui-hp {
+        position: fixed;
+        left: 10px;
+        top: 10px;
+        padding: 6px 10px;
+        background: rgba(0, 0, 0, 0.5);
+        color: #ffffff;
+        font-size: 16px;
+        border-radius: 4px;
+        z-index: 10;
+      }
+
+      /* Group number UI (under HP) */
+      #ui-group {
+        position: fixed;
+        left: 10px;
+        top: 50px; /* slightly below HP */
+        padding: 6px 10px;
+        background: rgba(0, 0, 0, 0.5);
+        color: #ffffff;
+        font-size: 16px;
+        border-radius: 4px;
+        z-index: 10;
+      }
+
+      /* Bottom-left roll cooldown display */
+      #roll-cd {
+        position: fixed;
+        left: 10px;
+        bottom: 10px;
+        padding: 6px 10px;
+        background: rgba(0, 0, 0, 0.5);
+        color: #ffffff;
+        font-size: 14px;
+        border-radius: 4px;
+        z-index: 10;
+      }
+
+      /* Top-center Wave & Time display */
+      #ui-wave-time {
+        position: fixed;
+        top: 10px;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 6px 12px;
+        background: rgba(0, 0, 0, 0.5);
+        color: #ffffff;
+        font-size: 16px;
+        border-radius: 4px;
+        display: flex;
+        gap: 16px;
+        z-index: 10;
+      }
+
+      /* Top-right coin UI */
+      #ui-coin {
+        position: fixed;
+        right: 10px;
+        top: 10px;
+        padding: 6px 10px;
+        background: rgba(0, 0, 0, 0.5);
+        color: #ffffff;
+        font-size: 16px;
+        border-radius: 4px;
+        z-index: 10;
+      }
+
+      /* Cheat panel: right side, under coin */
+      #cheat-panel {
+        position: fixed;
+        right: 10px;
+        top: 60px; /* below coin UI */
+        padding: 8px 10px;
+        background: rgba(0, 0, 0, 0.6);
+        color: #ffffff;
+        font-size: 12px;
+        border-radius: 4px;
+        z-index: 11;
+      }
+
+      #cheat-panel h3 {
+        margin: 0 0 6px 0;
+        font-size: 13px;
+        text-align: center;
+      }
+
+      #cheat-panel .cheat-row {
+        margin-bottom: 4px;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+
+      #cheat-panel label {
+        white-space: nowrap;
+      }
+
+      #cheat-panel input {
+        width: 70px;
+        font-size: 11px;
+      }
+
+      #cheat-panel button {
+        font-size: 11px;
+        padding: 2px 6px;
+        cursor: pointer;
+      }
+
+      /* Common overlay styles: Start / Game Over / Wave Complete / Shop */
+      .overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.6);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 20;
+      }
+
+      .overlay-panel {
+        background: #222;
+        border: 1px solid #555;
+        border-radius: 8px;
+        padding: 16px 20px;
+        min-width: 360px;
+        max-width: 480px;
+        color: #f0f0f0;
+        box-shadow: 0 0 15px rgba(0, 0, 0, 0.7);
+      }
+
+      .overlay-panel h1,
+      .overlay-panel h2 {
+        margin: 0 0 8px 0;
+        text-align: center;
+      }
+
+      .overlay-panel p {
+        margin: 4px 0;
+        font-size: 14px;
+        text-align: center;
+      }
+
+      .overlay-panel button {
+        cursor: pointer;
+      }
+
+      /* Center the Start and Restart buttons */
+      #start-overlay .overlay-panel button,
+      #game-over-overlay .overlay-panel button {
+        display: block;
+        margin: 12px auto 0; /* 12px top, auto left/right for centering */
+        min-width: 120px;
+      }
+
+      #game-over-overlay h1 {
+        font-size: 32px;
+      }
+
+      #start-overlay h1 {
+        font-size: 28px;
+      }
+
+      /* Shop: three main option buttons */
+      .shop-options {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin: 12px 0;
+      }
+
+      .shop-btn {
+        padding: 10px 12px;
+        font-size: 14px;
+        border-radius: 6px;
+        border: 1px solid #888;
+        background: #333;
+        color: #f0f0f0;
+        cursor: pointer;
+        text-align: left;
+        transition: background 0.15s, transform 0.1s;
+      }
+
+      .shop-btn:hover {
+        background: #444;
+        transform: translateY(-1px);
+      }
+
+      .shop-btn:active {
+        transform: translateY(0);
+        background: #222;
+      }
+
+      /* Bottom row buttons: Refresh + Leave Merchant */
+      .shop-bottom-row {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 8px;
+        gap: 8px;
+      }
+
+      .shop-small-btn {
+        flex: 1;
+        padding: 6px 8px;
+        font-size: 13px;
+        border-radius: 6px;
+        border: 1px solid #777;
+        background: #252525;
+        color: #f0f0f0;
+        cursor: pointer;
+        transition: background 0.15s, transform 0.1s;
+      }
+
+      .shop-small-btn:hover {
+        background: #3a3a3a;
+        transform: translateY(-1px);
+      }
+
+      .shop-small-btn:active {
+        transform: translateY(0);
+        background: #181818;
+      }
+
+      .shop-tip {
+        margin-top: 10px;
+        font-size: 12px;
+        color: #cccccc;
+        text-align: left;
+      }
+    </style>
+  </head>
+
+  <body>
+    <canvas id="c"></canvas>
+
+    <!-- HP display -->
+    <div id="ui-hp">HP: 10</div>
+
+    <!-- Group display -->
+    <div id="ui-group">Group: 0721</div>
+
+    <!-- Roll cooldown display -->
+    <div id="roll-cd">Roll: Ready</div>
+
+    <!-- Wave & Time display -->
+    <div id="ui-wave-time">
+      <span id="ui-wave">Wave: 1</span>
+      <span id="ui-time">Time: 60.0s</span>
+    </div>
+
+    <!-- Coin display (top-right) -->
+    <div id="ui-coin">Coins: 0</div>
+
+    <!-- Cheat Menu -->
+    <div id="cheat-panel">
+      <h3>Cheat Menu</h3>
+      <div class="cheat-row">
+        <label for="cheat-coins">Coins:</label>
+        <input id="cheat-coins" type="number" />
+        <button id="cheat-coins-apply">Set</button>
+      </div>
+      <div class="cheat-row">
+        <label for="cheat-speed">Move:</label>
+        <input id="cheat-speed" type="number" step="0.1" />
+        <button id="cheat-speed-apply">Set</button>
+      </div>
+      <div class="cheat-row">
+        <label for="cheat-hp">HP:</label>
+        <input id="cheat-hp" type="number" />
+        <button id="cheat-hp-apply">Set</button>
+      </div>
+      <div class="cheat-row">
+        <button id="cheat-next-wave" style="width: 100%;">Next Wave</button>
+      </div>
+    </div>
+
+    <!-- Start Game overlay -->
+    <div id="start-overlay" class="overlay">
+      <div class="overlay-panel">
+        <h1>Start Game</h1>
+        <p>WASD to move, mouse to aim, hold LMB to shoot, Space to roll, F to interact.</p>
+        <button id="start-btn">Start</button>
+      </div>
+    </div>
+
+    <!-- Game Over overlay -->
+    <div id="game-over-overlay" class="overlay" style="display: none;">
+      <div class="overlay-panel">
+        <h1>Game Over</h1>
+        <button id="restart-btn">Restart</button>
+      </div>
+    </div>
+
+    <!-- Wave Complete overlay -->
+    <div
+      id="wave-complete-overlay"
+      class="overlay"
+      style="display: none;"
+    >
+      <div class="overlay-panel" id="wave-complete-panel">
+        <h1 id="wave-complete-title">Wave 1 Cleared!</h1>
+        <button id="next-wave-btn">Next Wave</button>
+      </div>
+    </div>
+
+    <!-- Shop UI: choose buffs -->
+    <div
+      id="shop-overlay"
+      class="overlay"
+      style="display: none;"
+    >
+      <div class="overlay-panel">
+        <h2>Shop – Choose an Upgrade</h2>
+        <p>Stand on the red tile and press F to talk to the merchant and open the shop.</p>
+
+        <div class="shop-options">
+          <button id="shop-opt-1" class="shop-btn">
+            Upgrade Option 1 (placeholder)
+          </button>
+          <button id="shop-opt-2" class="shop-btn">
+            Upgrade Option 2 (placeholder)
+          </button>
+          <button id="shop-opt-3" class="shop-btn">
+            Upgrade Option 3 (placeholder)
+          </button>
+        </div>
+
+        <div class="shop-bottom-row">
+          <button id="shop-refresh-btn" class="shop-small-btn">
+            Reroll options (Cost: 3 coins)
+          </button>
+
+          <button id="shop-close-btn" class="shop-small-btn">
+            Leave merchant
+          </button>
+        </div>
+
+        <p class="shop-tip">
+          Tip: After leaving the merchant, stand on the green tile and press F to end the shop wave and start the next wave.
+        </p>
+      </div>
+    </div>
+
+    <!-- Import map for three.module.js -->
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "../libs/CS559-Three/build/three.module.js"
+        }
+      }
+    </script>
+
+    <!-- Load main.js as an ES module -->
+    <script type="module" src="main.js"></script>
+  </body>
+</html>
