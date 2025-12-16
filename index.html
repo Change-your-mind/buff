@@ -31,7 +31,7 @@
       #ui-group {
         position: fixed;
         left: 10px;
-        top: 50px; /* slightly below HP */
+        top: 50px;
         padding: 6px 10px;
         background: rgba(0, 0, 0, 0.5);
         color: #ffffff;
@@ -82,11 +82,46 @@
         z-index: 10;
       }
 
-      /* Cheat panel: right side, under coin */
+      /* Audio UI */
+      #ui-audio {
+        position: fixed;
+        right: 10px;
+        top: 50px;
+        padding: 6px 10px;
+        background: rgba(0, 0, 0, 0.5);
+        color: #ffffff;
+        font-size: 12px;
+        border-radius: 4px;
+        z-index: 10;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      #ui-audio button {
+        cursor: pointer;
+      }
+
+      /* Texture Toggle UI */
+      #ui-texture-toggle {
+        position: fixed;
+        right: 10px;
+        top: 90px;
+        padding: 6px 10px;
+        background: rgba(0, 0, 0, 0.5);
+        color: #ffffff;
+        font-size: 12px;
+        border-radius: 4px;
+        z-index: 10;
+      }
+      #ui-texture-toggle button {
+        cursor: pointer;
+      }
+
+      /* Cheat panel: right side, under toggle */
       #cheat-panel {
         position: fixed;
         right: 10px;
-        top: 60px; /* below coin UI */
+        top: 130px;
         padding: 8px 10px;
         background: rgba(0, 0, 0, 0.6);
         color: #ffffff;
@@ -123,7 +158,7 @@
         cursor: pointer;
       }
 
-      /* Common overlay styles: Start / Game Over / Wave Complete / Shop */
+      /* Common overlay styles */
       .overlay {
         position: fixed;
         inset: 0;
@@ -161,11 +196,10 @@
         cursor: pointer;
       }
 
-      /* Center the Start and Restart buttons */
       #start-overlay .overlay-panel button,
       #game-over-overlay .overlay-panel button {
         display: block;
-        margin: 12px auto 0; /* 12px top, auto left/right for centering */
+        margin: 12px auto 0;
         min-width: 120px;
       }
 
@@ -177,7 +211,7 @@
         font-size: 28px;
       }
 
-      /* Shop: three main option buttons */
+      /* Shop */
       .shop-options {
         display: flex;
         flex-direction: column;
@@ -207,7 +241,6 @@
         background: #222;
       }
 
-      /* Bottom row buttons: Refresh + Leave Merchant */
       .shop-bottom-row {
         display: flex;
         justify-content: space-between;
@@ -249,25 +282,29 @@
   <body>
     <canvas id="c"></canvas>
 
-    <!-- HP display -->
     <div id="ui-hp">HP: 10</div>
-
-    <!-- Group display -->
     <div id="ui-group">Group: 0721</div>
-
-    <!-- Roll cooldown display -->
     <div id="roll-cd">Roll: Ready</div>
 
-    <!-- Wave & Time display -->
     <div id="ui-wave-time">
       <span id="ui-wave">Wave: 1</span>
       <span id="ui-time">Time: 60.0s</span>
     </div>
 
-    <!-- Coin display (top-right) -->
     <div id="ui-coin">Coins: 0</div>
 
-    <!-- Cheat Menu -->
+    <div id="ui-audio">
+      <button id="btn-mute">Mute</button>
+      <label style="display:flex; gap:6px; align-items:center;">
+        Vol
+        <input id="slider-vol" type="range" min="0" max="1" step="0.01" value="0.35" />
+      </label>
+    </div>
+
+    <div id="ui-texture-toggle">
+      <button id="btn-toggle-texture">Textures: ON</button>
+    </div>
+
     <div id="cheat-panel">
       <h3>Cheat Menu</h3>
       <div class="cheat-row">
@@ -290,7 +327,6 @@
       </div>
     </div>
 
-    <!-- Start Game overlay -->
     <div id="start-overlay" class="overlay">
       <div class="overlay-panel">
         <h1>Start Game</h1>
@@ -299,7 +335,6 @@
       </div>
     </div>
 
-    <!-- Game Over overlay -->
     <div id="game-over-overlay" class="overlay" style="display: none;">
       <div class="overlay-panel">
         <h1>Game Over</h1>
@@ -307,48 +342,29 @@
       </div>
     </div>
 
-    <!-- Wave Complete overlay -->
-    <div
-      id="wave-complete-overlay"
-      class="overlay"
-      style="display: none;"
-    >
+    <div id="wave-complete-overlay" class="overlay" style="display: none;">
       <div class="overlay-panel" id="wave-complete-panel">
         <h1 id="wave-complete-title">Wave 1 Cleared!</h1>
         <button id="next-wave-btn">Next Wave</button>
       </div>
     </div>
 
-    <!-- Shop UI: choose buffs -->
-    <div
-      id="shop-overlay"
-      class="overlay"
-      style="display: none;"
-    >
+    <div id="shop-overlay" class="overlay" style="display: none;">
       <div class="overlay-panel">
         <h2>Shop – Choose an Upgrade</h2>
         <p>Stand on the red tile and press F to talk to the merchant and open the shop.</p>
 
         <div class="shop-options">
-          <button id="shop-opt-1" class="shop-btn">
-            Upgrade Option 1 (placeholder)
-          </button>
-          <button id="shop-opt-2" class="shop-btn">
-            Upgrade Option 2 (placeholder)
-          </button>
-          <button id="shop-opt-3" class="shop-btn">
-            Upgrade Option 3 (placeholder)
-          </button>
+          <button id="shop-opt-1" class="shop-btn">Upgrade Option 1 (placeholder)</button>
+          <button id="shop-opt-2" class="shop-btn">Upgrade Option 2 (placeholder)</button>
+          <button id="shop-opt-3" class="shop-btn">Upgrade Option 3 (placeholder)</button>
         </div>
 
         <div class="shop-bottom-row">
           <button id="shop-refresh-btn" class="shop-small-btn">
             Reroll options (Cost: 3 coins)
           </button>
-
-          <button id="shop-close-btn" class="shop-small-btn">
-            Leave merchant
-          </button>
+          <button id="shop-close-btn" class="shop-small-btn">Leave merchant</button>
         </div>
 
         <p class="shop-tip">
@@ -357,16 +373,14 @@
       </div>
     </div>
 
-<!-- Import map for three.module.js -->
-<script type="importmap">
-{
-  "imports": {
-    "three": "./libs/CS559-Three/build/three.module.js"
-  }
-}
-</script>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "./libs/CS559-Three/build/three.module.js"
+        }
+      }
+    </script>
 
-<!-- Load main.js as an ES module (entry only) -->
-<script type="module" src="./main.js"></script>
+    <script type="module" src="./main.js"></script>
   </body>
 </html>

@@ -9,7 +9,7 @@ let innerHalfSize;
 
 // 子弹数组
 const bullets = [];
-const BULLET_SPEED = 1.2;        // 基础弹速
+const BULLET_SPEED = 1.2; // 基础弹速
 
 // 通过全局的倍率来计算当前真实弹速（倍率在 main.js 里改）
 function getBulletSpeed() {
@@ -19,7 +19,6 @@ function getBulletSpeed() {
 
 const BULLET_MAX_DISTANCE = 300;
 const BULLET_HIT_RADIUS = 2.0;
-
 
 const bulletGeom = new THREE.SphereGeometry(0.25, 8, 8);
 const bulletMatNormal = new THREE.MeshBasicMaterial({ color: 0xffff00 });
@@ -35,15 +34,11 @@ const SCATTER_ANGLE_DEG = 10;
 const SCATTER_MAX_BULLETS = 36;
 
 // ===== 弹射（墙体反弹）相关 =====
-// 现在的含义：子弹撞到墙时，如果 ricochetRemaining > 0，就按照光反射角反弹。
-// 第一次获得 BUFF：2 次反弹；之后每次购买：+1 次反弹
 let ricochetEnabled = false;
 let ricochetBounces = 0; // 一发子弹最大反弹次数（由 BUFF 决定）
-const RICOCHET_DAMAGE_FALLOFF = 0.75; // 现阶段未使用，保留以便以后想让反弹后伤害衰减时用
+const RICOCHET_DAMAGE_FALLOFF = 0.75; // 现阶段未使用，保留
 
-// ===== 穿透相关 =====  ⭐ 新增
-// pierceCount 表示每发子弹最多还能“穿透几次敌人”。
-// 例如 pierceCount = 2 → 一发子弹最多命中 3 个敌人（2 次穿透）。
+// ===== 穿透相关 =====
 let pierceEnabled = false;
 let pierceCount = 0;
 
@@ -59,14 +54,18 @@ let rocketDirectMultiplier = 1.0;
 
 // 自动连发：基础间隔 + 可被 BUFF 修改的射击频率
 const BASE_FIRE_INTERVAL = 500; // 0.5 秒，基础攻击间隔
-let fireRateMultiplier = 1.0;   // 射击频率倍率（1.0 = 不加成）
+let fireRateMultiplier = 1.0; // 射击频率倍率（1.0 = 不加成）
 
 let isShooting = false;
 let lastShotTime = -Infinity;
 
-
 // 基础伤害
 const BASE_BULLET_DAMAGE = 1;
+
+// ✅ NEW：读取 Tier1 的基础伤害加成（buff.js 会写 window.baseDamageBonus）
+function getBaseDamageBonus() {
+  return typeof window.baseDamageBonus === "number" ? window.baseDamageBonus : 0;
+}
 
 // ===== 初始绑定 =====
 export function initCombat(options) {
@@ -95,10 +94,8 @@ export function upgradeScatter() {
   }
 
   if (current === 1) {
-    // 第一次：+2，变 3 发
     current += 2;
   } else {
-    // 之后每次 +1
     current += 1;
   }
 
@@ -117,24 +114,20 @@ export function getRicochetBounceCount() {
 
 export function upgradeRicochet() {
   if (!ricochetEnabled) {
-    // 第一次获得 BUFF：开启弹射，并给 2 次反弹
     ricochetEnabled = true;
     ricochetBounces = 2;
   } else {
-    // 后续每次购买 +1 次反弹
     ricochetBounces += 1;
   }
   console.log("[BUFF] 弹射升级，最大墙体反弹次数 =", ricochetBounces);
 }
 
-// ========== 穿透相关 ==========  ⭐ 新增
+// ========== 穿透相关 ==========
 export function upgradePierce() {
   if (!pierceEnabled) {
-    // 第一次购买：开启穿透，并给予 2 次穿透
     pierceEnabled = true;
     pierceCount = 2;
   } else {
-    // 之后每次购买 +1 次穿透
     pierceCount += 1;
   }
   console.log("[BUFF] 穿透子弹升级，每发子弹可穿透次数 =", pierceCount);
@@ -181,20 +174,14 @@ export function upgradeFireBullet() {
 }
 
 // ========== 射击频率（攻速）相关 ==========
-// 第一次 +10%，之后每次 +5%
 export function upgradeFireRate() {
   if (fireRateMultiplier === 1.0) {
-    // 第一次购买：+10%
     fireRateMultiplier += 0.10;
   } else {
-    // 之后每次购买：+5%
     fireRateMultiplier += 0.05;
   }
   console.log("[BUFF] 射击频率提升，当前倍率 =", fireRateMultiplier.toFixed(2));
 }
-
-
-
 
 // ========== 鼠标输入 ==========
 export function handleMouseDown(button) {
@@ -243,7 +230,8 @@ function tryShootBullet(now) {
   if (baseDir.lengthSq() < 1e-6) return;
   baseDir.normalize();
 
-  let baseDamage = BASE_BULLET_DAMAGE;
+  // ✅ NEW：基础伤害 = 原本基础伤害 + Tier1加成（兼容所有攻击方式）
+  let baseDamage = BASE_BULLET_DAMAGE + getBaseDamageBonus();
 
   const useRocket = rocketEnabled;
   if (useRocket) {
@@ -270,7 +258,7 @@ function tryShootBullet(now) {
     spawnPos.y += 1;
     spawnPos.add(dirRot.clone().multiplyScalar(2.0));
 
-    // 选择材质：火箭弹优先保持自己的颜色，其次是火焰子弹（红色），否则为普通黄色
+    // ✅ 修复：真正用 bulletMaterial（否则火焰子弹不会变红）
     let bulletMaterial;
     if (useRocket) {
       bulletMaterial = bulletMatRocket;
@@ -280,10 +268,7 @@ function tryShootBullet(now) {
       bulletMaterial = bulletMatNormal;
     }
 
-    const bulletMesh = new THREE.Mesh(
-      bulletGeom,
-      useRocket ? bulletMatRocket : bulletMatNormal
-    );
+    const bulletMesh = new THREE.Mesh(bulletGeom, bulletMaterial);
     bulletMesh.position.copy(spawnPos);
     scene.add(bulletMesh);
 
@@ -295,7 +280,7 @@ function tryShootBullet(now) {
       // 子弹特性
       isRocket: useRocket,
 
-      // ⭐ 现在的 ricochetRemaining：表示“还能在墙上反弹几次”
+      // ⭐ 还能在墙上反弹几次
       ricochetRemaining: ricochetEnabled ? getRicochetBounceCount() : 0,
 
       damage: baseDamage,
@@ -303,9 +288,9 @@ function tryShootBullet(now) {
       splashFactor: useRocket ? ROCKET_SPLASH_FACTOR : 0,
     };
 
-    // ⭐ 穿透：现在普通子弹 + 火箭弹都可以吃穿透
+    // ⭐ 穿透：普通子弹 + 火箭弹都可以吃穿透
     if (pierceEnabled) {
-      bullet.pierceRemaining = pierceCount; // 一发子弹最多可穿透 pierceCount 次
+      bullet.pierceRemaining = pierceCount;
     } else {
       bullet.pierceRemaining = 0;
     }
@@ -326,7 +311,6 @@ const EXPLOSION_DURATION = 800; // 0.8s
 function spawnExplosionVisual(center, radius, now) {
   if (!scene || radius <= 0) return;
 
-  // 生成上半球（y ∈ [0, 1]），原点在地面
   const baseRadius = 1;
   const geom = new THREE.SphereGeometry(
     baseRadius,
@@ -335,7 +319,7 @@ function spawnExplosionVisual(center, radius, now) {
     0,
     Math.PI * 2,
     0,
-    Math.PI / 2 // 只要上半球
+    Math.PI / 2
   );
   const mat = new THREE.MeshBasicMaterial({
     color: 0xffaa33,
@@ -346,13 +330,10 @@ function spawnExplosionVisual(center, radius, now) {
   });
 
   const mesh = new THREE.Mesh(geom, mat);
-
-  // 几何本身是 y∈[0,1] 的半球，所以直接放在 y=0 即“贴地”
   mesh.position.set(center.x, 0, center.z);
 
-  // 半径要等于爆炸范围半径：最终缩放 = radius / baseRadius
   const targetScale = radius / baseRadius;
-  const initialScale = targetScale * 0.1; // 初始 10% 大小
+  const initialScale = targetScale * 0.1;
 
   mesh.scale.set(initialScale, initialScale, initialScale);
   scene.add(mesh);
@@ -373,7 +354,6 @@ export function updateExplosions(now) {
     const tRaw = (now - ex.startTime) / ex.duration;
 
     if (tRaw >= 1) {
-      // 0.8 秒结束，移除半球
       scene.remove(ex.mesh);
       ex.mesh.geometry.dispose();
       ex.material.dispose();
@@ -382,18 +362,13 @@ export function updateExplosions(now) {
     }
 
     const t = Math.max(0, Math.min(1, tRaw));
-
-    // 尺寸：从 initialScale 线性放大到 targetScale
-    const scale =
-      ex.initialScale + (ex.targetScale - ex.initialScale) * t;
+    const scale = ex.initialScale + (ex.targetScale - ex.initialScale) * t;
     ex.mesh.scale.set(scale, scale, scale);
 
-    // 透明度：前 30% 渐显，后 70% 渐隐
     let alpha;
-    if (t < 0.3) {
-      alpha = 0.9 * (t / 0.3);
-    } else {
-      const k = (t - 0.3) / 0.7; // 0 ~ 1
+    if (t < 0.3) alpha = 0.9 * (t / 0.3);
+    else {
+      const k = (t - 0.3) / 0.7;
       alpha = 0.9 * (1 - k);
     }
     ex.material.opacity = alpha;
@@ -406,23 +381,19 @@ export function updateBullets(now) {
 
   for (let i = bullets.length - 1; i >= 0; i--) {
     const b = bullets[i];
-    const speed = getBulletSpeed();  // ⭐ 这里读当前弹速
+    const speed = getBulletSpeed();
     b.mesh.position.add(b.dir.clone().multiplyScalar(speed));
     b.distance += speed;
 
     let removeBullet = false;
     let bp = b.mesh.position;
 
-    // ====== 先检测是否撞墙（地图边界） ======
-    const hitWall =
-      Math.abs(bp.x) >= wallInner || Math.abs(bp.z) >= wallInner;
+    const hitWall = Math.abs(bp.x) >= wallInner || Math.abs(bp.z) >= wallInner;
 
     if (hitWall) {
-      // ⭐ 火箭弹：撞墙会爆炸（无论是否有弹射）
       if (b.isRocket && b.explosionRadius > 0) {
         spawnExplosionVisual(bp, b.explosionRadius, now);
 
-        // 通知敌人模块执行爆炸伤害逻辑
         if (onBulletHitEnemy) {
           onBulletHitEnemy(
             bp,
@@ -436,38 +407,26 @@ export function updateBullets(now) {
       }
 
       if (b.ricochetRemaining > 0) {
-        // ⭐ 有弹射次数 → 按光反射角反弹，并刷新存在时间
         const epsilon = 0.01;
         const absX = Math.abs(bp.x);
         const absZ = Math.abs(bp.z);
 
-        // 撞左右墙：反转 x 方向，并把位置稍微夹回边界以内
         if (absX >= wallInner) {
           b.dir.x *= -1;
-          bp.x =
-            (bp.x > 0 ? 1 : -1) * (wallInner - epsilon);
+          bp.x = (bp.x > 0 ? 1 : -1) * (wallInner - epsilon);
         }
 
-        // 撞上下墙：反转 z 方向，并把位置稍微夹回边界以内
         if (absZ >= wallInner) {
           b.dir.z *= -1;
-          bp.z =
-            (bp.z > 0 ? 1 : -1) * (wallInner - epsilon);
+          bp.z = (bp.z > 0 ? 1 : -1) * (wallInner - epsilon);
         }
 
         b.ricochetRemaining -= 1;
-
-        // ⭐ 刷新存在时间：让子弹可以再飞一段完整距离
         b.distance = 0;
-
-        // 子弹继续存在，不移除
       } else {
-        // 没有反弹次数了，撞墙就消失（火箭已经在上面爆炸过了）
         removeBullet = true;
       }
-    }
-    // ====== 未撞墙：再检测是否飞太远 / 打到敌人 ======
-    else if (b.distance > BULLET_MAX_DISTANCE) {
+    } else if (b.distance > BULLET_MAX_DISTANCE) {
       removeBullet = true;
     } else if (onBulletHitEnemy) {
       const hitResult = onBulletHitEnemy(
@@ -480,35 +439,25 @@ export function updateBullets(now) {
       );
 
       if (hitResult && hitResult.hit) {
-        // 命中后，把子弹位置校正到命中点（敌人中心 / 第一死亡点）
         if (hitResult.position) {
           b.mesh.position.copy(hitResult.position);
           bp = b.mesh.position;
         }
 
-        // ⭐ 火箭弹命中敌人时：每次命中都爆一次
-        //    普通子弹 explosionRadius = 0，不会生成爆炸特效
         if (b.explosionRadius > 0 && hitResult.position) {
           spawnExplosionVisual(hitResult.position, b.explosionRadius, now);
         }
 
-        // ⭐ 穿透逻辑：
-        //   无论普通子弹还是火箭弹，只要还有穿透次数，就继续往前飞；
-        //   撞墙的逻辑仍然在上面，照样会被墙体挡住，不会穿墙。
         const canPierce =
           typeof b.pierceRemaining === "number" && b.pierceRemaining > 0;
 
         if (canPierce) {
           b.pierceRemaining -= 1;
 
-          // 为避免下一帧再次命中同一个敌人，把子弹沿着前进方向稍微推远一点
           const pushDist = BULLET_HIT_RADIUS * 1.1;
           b.mesh.position.add(b.dir.clone().multiplyScalar(pushDist));
           b.distance += pushDist;
-
-          // 子弹继续存在，不移除
         } else {
-          // 没有穿透次数：命中敌人后子弹消失
           removeBullet = true;
         }
       }
@@ -523,13 +472,11 @@ export function updateBullets(now) {
 
 // ========== 只清子弹（切换波次用，不清 BUFF） ==========
 export function clearBulletsForWaveChange(sceneRef) {
-  // 清空子弹
   for (const b of bullets) {
     sceneRef.remove(b.mesh);
   }
   bullets.length = 0;
 
-  // 清空爆炸半球
   for (const ex of explosions) {
     sceneRef.remove(ex.mesh);
     ex.mesh.geometry.dispose();
@@ -545,7 +492,6 @@ export function clearBulletsForWaveChange(sceneRef) {
 export function resetCombatState(sceneRef) {
   clearBulletsForWaveChange(sceneRef);
 
-  // 重置 BUFF 状态
   scatterBulletCount = 1;
 
   ricochetEnabled = false;

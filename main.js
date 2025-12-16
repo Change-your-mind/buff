@@ -26,8 +26,8 @@ import {
   upgradeRicochet,
   upgradeRocket,
   updateExplosions,
-  clearBulletsForWaveChange, // ⭐ 新增：只清子弹，不清 BUFF
-  upgradeFireBullet, // 🔥 新增
+  clearBulletsForWaveChange,
+  upgradeFireBullet,
   upgradePierce,
   upgradeFireRate,
 } from "./combat.js";
@@ -42,8 +42,8 @@ import {
   upgradeSlow,
   updateDamageTexts,
   upgradeSticky,
-  upgradeGravity, // ✅ 新增
-  upgradeFireTrail, // 🔥 新增
+  upgradeGravity,
+  upgradeFireTrail,
   getFireTrailTotalDurationMs,
 } from "./enemies.js";
 
@@ -56,6 +56,7 @@ import {
   getCoinCount,
   setCoinCount,
   addCoins,
+  setCoinTextureEnabled, // ✅ NEW
 } from "./coins.js";
 
 import {
@@ -65,8 +66,96 @@ import {
   handleShopInteractInSafeWave,
 } from "./shopSystem.js";
 
+// ===== Global texture toggle =====
+window.USE_TEXTURES = true;
+
+// ===== Textures =====
+const texLoader = new THREE.TextureLoader();
+const Textures = {
+  ground: texLoader.load("./assets/textures/ground.png"),
+  wall: texLoader.load("./assets/textures/wall.png"),
+  face: texLoader.load("./assets/textures/face.jpg"),
+};
+
+Textures.ground.wrapS = Textures.ground.wrapT = THREE.RepeatWrapping;
+Textures.ground.repeat.set(12, 12);
+
+Textures.wall.wrapS = Textures.wall.wrapT = THREE.RepeatWrapping;
+Textures.wall.repeat.set(4, 1);
+
+// ===== Audio Manager (start on user gesture) =====
+const AudioMgr = (() => {
+  let bgm = null;
+  let muted = false;
+  let volume = 0.35;
+  const sfx = new Map();
+
+  function safeNewAudio(url) {
+    try {
+      return new Audio(url);
+    } catch {
+      return null;
+    }
+  }
+
+  function initOnce() {
+    if (bgm) return;
+
+    bgm = safeNewAudio("./assets/audio/bgm.mp3");
+    if (bgm) {
+      bgm.loop = true;
+      bgm.volume = volume;
+    }
+
+    const coin = safeNewAudio("./assets/audio/coin.mp3");
+    if (coin) {
+      coin.volume = Math.min(1, volume + 0.1);
+      sfx.set("coin", coin);
+    }
+  }
+
+  async function startBgm() {
+    initOnce();
+    if (!bgm || muted) return;
+    try { await bgm.play(); } catch (e) {}
+  }
+
+  function stopBgm() {
+    if (!bgm) return;
+    bgm.pause();
+    bgm.currentTime = 0;
+  }
+
+  function play(name) {
+    if (muted) return;
+    const a = sfx.get(name);
+    if (!a) return;
+    try {
+      a.currentTime = 0;
+      a.play();
+    } catch (e) {}
+  }
+
+  function setMuted(m) {
+    muted = !!m;
+    if (bgm) {
+      if (muted) bgm.pause();
+      else bgm.play().catch(()=>{});
+    }
+  }
+
+  function setVolume(v) {
+    volume = Math.max(0, Math.min(1, v));
+    if (bgm) bgm.volume = volume;
+    for (const a of sfx.values()) a.volume = Math.min(1, volume + 0.15);
+  }
+
+  return { initOnce, startBgm, stopBgm, play, setMuted, setVolume, get muted(){return muted;} };
+})();
+
+window.__playSfx = (name) => AudioMgr.play(name);
+
 // ======= 基础设置 =======
-// 白色主角：这里没变，玩家 mesh 材质里是白色
 const canvas = document.getElementById("c");
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -84,7 +173,7 @@ const PLAYER_COLLISION_RADIUS = 1.5;
 
 const WALL_THICKNESS = 4;
 const WALL_HALF_THICKNESS = WALL_THICKNESS / 2;
-const INNER_HALF_SIZE = MAP_HALF_SIZE - WALL_THICKNESS; // 玩家/敌人中心最大坐标
+const INNER_HALF_SIZE = MAP_HALF_SIZE - WALL_THICKNESS;
 
 // ======= UI 相关 =======
 const hpElement = document.getElementById("ui-hp");
@@ -92,6 +181,13 @@ const rollCDElement = document.getElementById("roll-cd");
 const waveElement = document.getElementById("ui-wave");
 const timeElement = document.getElementById("ui-time");
 const coinElement = document.getElementById("ui-coin");
+
+// Audio UI
+const muteBtn = document.getElementById("btn-mute");
+const volSlider = document.getElementById("slider-vol");
+
+// Texture toggle UI
+const textureBtn = document.getElementById("btn-toggle-texture");
 
 // 作弊 UI 元素
 const cheatCoinsInput = document.getElementById("cheat-coins");
@@ -120,11 +216,24 @@ const shopOpt2Btn = document.getElementById("shop-opt-2");
 const shopOpt3Btn = document.getElementById("shop-opt-3");
 const shopRefreshBtn = document.getElementById("shop-refresh-btn");
 
+// Audio handlers
+if (muteBtn) {
+  muteBtn.addEventListener("click", () => {
+    AudioMgr.setMuted(!AudioMgr.muted);
+    muteBtn.textContent = AudioMgr.muted ? "Unmute" : "Mute";
+  });
+}
+if (volSlider) {
+  volSlider.addEventListener("input", (e) => {
+    AudioMgr.setVolume(parseFloat(e.target.value));
+  });
+}
+
 // ======= 全局状态 =======
 let isGameStarted = false;
 let isGameOver = false;
 
-// ======= 相机：斜俯视角，可旋转 =======
+// ======= 相机 =======
 const CAMERA_RADIUS = 70;
 const CAMERA_HEIGHT = 60;
 const CAMERA_LOOK_AT_HEIGHT = 5;
@@ -161,68 +270,45 @@ function updateCamera() {
   scene.add(dir);
 }
 
-// ======= 地面 & 网格 =======
+// ======= 地面（两套材质：贴图 / 纯色） =======
+const groundMatTextured = new THREE.MeshPhongMaterial({ map: Textures.ground });
+const groundMatPlain = new THREE.MeshPhongMaterial({ color: 0x3a7d2e });
+
 const plane = new THREE.Mesh(
   new THREE.PlaneGeometry(mapSize, mapSize),
-  new THREE.MeshPhongMaterial({ color: 0x3a7d2e })
+  groundMatTextured
 );
 plane.rotation.x = -Math.PI / 2;
 scene.add(plane);
 
 scene.add(new THREE.GridHelper(mapSize, 40));
 
-// ======= 内边界墙 =======
+// ======= 墙（两套材质：贴图 / 纯色） =======
+const wallMatTextured = new THREE.MeshPhongMaterial({ map: Textures.wall });
+const wallMatPlain = new THREE.MeshPhongMaterial({ color: 0x555555 });
+
 const wallHeight = 8;
-const wallMaterial = new THREE.MeshPhongMaterial({ color: 0x555555 });
 
 const wallLengthX = INNER_HALF_SIZE * 2;
-const wallGeomX = new THREE.BoxGeometry(
-  wallLengthX,
-  wallHeight,
-  WALL_THICKNESS
-);
+const wallGeomX = new THREE.BoxGeometry(wallLengthX, wallHeight, WALL_THICKNESS);
 
 const wallLengthZ = INNER_HALF_SIZE * 2;
-const wallGeomZ = new THREE.BoxGeometry(
-  WALL_THICKNESS,
-  wallHeight,
-  wallLengthZ
-);
+const wallGeomZ = new THREE.BoxGeometry(WALL_THICKNESS, wallHeight, wallLengthZ);
 
-// 北面（+Z）
-const wallNorth = new THREE.Mesh(wallGeomX, wallMaterial);
-wallNorth.position.set(
-  0,
-  wallHeight / 2,
-  INNER_HALF_SIZE + WALL_HALF_THICKNESS
-);
+const wallNorth = new THREE.Mesh(wallGeomX, wallMatTextured);
+wallNorth.position.set(0, wallHeight / 2, INNER_HALF_SIZE + WALL_HALF_THICKNESS);
 scene.add(wallNorth);
 
-// 南面（-Z）
-const wallSouth = new THREE.Mesh(wallGeomX, wallMaterial);
-wallSouth.position.set(
-  0,
-  wallHeight / 2,
-  -INNER_HALF_SIZE - WALL_HALF_THICKNESS
-);
+const wallSouth = new THREE.Mesh(wallGeomX, wallMatTextured);
+wallSouth.position.set(0, wallHeight / 2, -INNER_HALF_SIZE - WALL_HALF_THICKNESS);
 scene.add(wallSouth);
 
-// 东面（+X）
-const wallEast = new THREE.Mesh(wallGeomZ, wallMaterial);
-wallEast.position.set(
-  INNER_HALF_SIZE + WALL_HALF_THICKNESS,
-  wallHeight / 2,
-  0
-);
+const wallEast = new THREE.Mesh(wallGeomZ, wallMatTextured);
+wallEast.position.set(INNER_HALF_SIZE + WALL_HALF_THICKNESS, wallHeight / 2, 0);
 scene.add(wallEast);
 
-// 西面（-X）
-const wallWest = new THREE.Mesh(wallGeomZ, wallMaterial);
-wallWest.position.set(
-  -INNER_HALF_SIZE - WALL_HALF_THICKNESS,
-  wallHeight / 2,
-  0
-);
+const wallWest = new THREE.Mesh(wallGeomZ, wallMatTextured);
+wallWest.position.set(-INNER_HALF_SIZE - WALL_HALF_THICKNESS, wallHeight / 2, 0);
 scene.add(wallWest);
 
 // ======= 商店建筑（安全波次用） =======
@@ -230,18 +316,17 @@ const shopData = createShopBuilding(scene);
 const shopGroup = shopData.group;
 const shopRedTile = shopData.redTile;
 const shopGreenTile = shopData.greenTile;
-const shopCollider = shopData.collider || null; // ✅ 商店碰撞体（buildings.js 里返回）
+const shopCollider = shopData.collider || null;
 shopGroup.visible = false;
 
-// ======= 安全关卡：治疗小人 + 绿色地毯（按 F 花费 10 货币回满血） =======
+// ======= 安全关卡：治疗小人 + 绿色地毯 =======
 const HEAL_COST = 10;
-const HEAL_RADIUS = 2.6; // 玩家站在地毯附近即可触发
+const HEAL_RADIUS = 2.6;
 
 const healerGroup = new THREE.Group();
 healerGroup.visible = false;
 scene.add(healerGroup);
 
-// 小人（简单方块人）
 {
   const matSkin = new THREE.MeshPhongMaterial({ color: 0xffffff });
   const matCloth = new THREE.MeshPhongMaterial({ color: 0xdddddd });
@@ -262,7 +347,6 @@ scene.add(healerGroup);
   healerGroup.add(legL, legR);
 }
 
-// 绿色地毯（治疗区）
 const healCarpet = new THREE.Mesh(
   new THREE.BoxGeometry(4.8, 0.15, 3.6),
   new THREE.MeshPhongMaterial({ color: 0x33ff66, emissive: 0x003300, shininess: 60 })
@@ -270,9 +354,8 @@ const healCarpet = new THREE.Mesh(
 healCarpet.position.set(0, 0.1, 0);
 healerGroup.add(healCarpet);
 
-// 把治疗小人放在商店前面一点（安全波次才显示）
-healerGroup.position.set(0, 0, 15); // 你想换位置就改这里
-healerGroup.rotation.y = Math.PI;   // 面向玩家来的方向
+healerGroup.position.set(0, 0, 15);
+healerGroup.rotation.y = Math.PI;
 
 function isPlayerOnHealCarpet() {
   if (!healerGroup.visible) return false;
@@ -286,23 +369,16 @@ function isPlayerOnHealCarpet() {
 
 function tryHealToFull() {
   if (playerHP >= playerMaxHP) return;
-
   const coins = getCoinCount();
-  if (coins < HEAL_COST) {
-    console.log(`[HEAL] not enough coins: need ${HEAL_COST}, have ${coins}`);
-    return;
-  }
+  if (coins < HEAL_COST) return;
 
-  // 扣钱并回满血
   addCoins(-HEAL_COST);
   playerHP = playerMaxHP;
   updateHPDisplay();
-  console.log(`[HEAL] healed to full for ${HEAL_COST} coins`);
 }
 
-// ======= 商店碰撞（玩家圆形 vs 商店 AABB） =======
+// ======= 商店碰撞 =======
 function resolveCircleAABB(pos, radius, boxCenter, halfX, halfZ) {
-  // 最近点（AABB 上距圆心最近的点）
   const closestX = THREE.MathUtils.clamp(pos.x, boxCenter.x - halfX, boxCenter.x + halfX);
   const closestZ = THREE.MathUtils.clamp(pos.z, boxCenter.z - halfZ, boxCenter.z + halfZ);
 
@@ -310,12 +386,11 @@ function resolveCircleAABB(pos, radius, boxCenter, halfX, halfZ) {
   const dz = pos.z - closestZ;
   const distSq = dx * dx + dz * dz;
 
-  if (distSq >= radius * radius) return; // 没碰到
+  if (distSq >= radius * radius) return;
 
   const dist = Math.sqrt(Math.max(1e-8, distSq));
   const push = radius - dist;
 
-  // dist 很小时给一个默认方向
   const nx = dist > 1e-6 ? dx / dist : 0;
   const nz = dist > 1e-6 ? dz / dist : 1;
 
@@ -336,26 +411,22 @@ function applyShopCollision() {
   resolveCircleAABB(player.position, PLAYER_COLLISION_RADIUS, c, halfX, halfZ);
 }
 
-
-// ======= 玩家（方块小人模型 + 走路动画） =======
+// ======= 玩家（方块人 + 脸片引用） =======
 const player = new THREE.Group();
 player.position.set(0, 1, 0);
 scene.add(player);
 
-// 走路动画状态
 let walkPhase = 0;
-
-// 四肢引用（用于走路摆动）
 let limb = null;
+let facePlaneRef = null; // ✅ for toggling
 
-// 创建“方块小人”
 {
   const humanoid = createBlockHumanoid();
   player.add(humanoid.root);
   limb = humanoid.limbRefs;
+  facePlaneRef = humanoid.facePlane;
 }
 
-// --- 方块小人构造函数：头/身/手/腿全用 BoxGeometry 拼 ---
 function createBlockHumanoid() {
   const root = new THREE.Group();
 
@@ -363,36 +434,39 @@ function createBlockHumanoid() {
   const matCloth = new THREE.MeshPhongMaterial({ color: 0xdddddd });
   const matPants = new THREE.MeshPhongMaterial({ color: 0x888888 });
 
-  // 身体
   const body = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.8, 1.0), matCloth);
   body.position.set(0, 1.5, 0);
   root.add(body);
 
-  // 头
   const head = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.2, 1.2), matSkin);
   head.position.set(0, 2.7, 0);
   root.add(head);
 
-  // 手臂：用 pivot 让它绕肩膀摆动
+  // Face sticker (Option C)
+  const faceMat = new THREE.MeshBasicMaterial({
+    map: Textures.face,
+    side: THREE.DoubleSide,
+  });
+  const facePlane = new THREE.Mesh(new THREE.PlaneGeometry(1.15, 1.15), faceMat);
+  facePlane.position.set(0, 0, 0.61); // if reversed, change to -0.61
+  head.add(facePlane);
+
   const armGeom = new THREE.BoxGeometry(0.5, 1.4, 0.5);
   const armL = new THREE.Mesh(armGeom, matSkin);
   const armR = new THREE.Mesh(armGeom, matSkin);
 
   const armPivotL = new THREE.Group();
   const armPivotR = new THREE.Group();
-  armPivotL.position.set(-1.15, 2.15, 0); // 左肩
-  armPivotR.position.set(1.15, 2.15, 0); // 右肩
+  armPivotL.position.set(-1.15, 2.15, 0);
+  armPivotR.position.set(1.15, 2.15, 0);
 
-  // 把手臂中心移到 pivot 下方（pivot 在肩）
   armL.position.set(0, -0.7, 0);
   armR.position.set(0, -0.7, 0);
 
   armPivotL.add(armL);
   armPivotR.add(armR);
-  root.add(armPivotL);
-  root.add(armPivotR);
+  root.add(armPivotL, armPivotR);
 
-  // 腿：用 pivot 让它绕胯部摆动
   const legGeom = new THREE.BoxGeometry(0.6, 1.6, 0.6);
   const legL = new THREE.Mesh(legGeom, matPants);
   const legR = new THREE.Mesh(legGeom, matPants);
@@ -407,13 +481,43 @@ function createBlockHumanoid() {
 
   legPivotL.add(legL);
   legPivotR.add(legR);
-  root.add(legPivotL);
-  root.add(legPivotR);
+  root.add(legPivotL, legPivotR);
 
   return {
     root,
     limbRefs: { armPivotL, armPivotR, legPivotL, legPivotR, body, head },
+    facePlane, // ✅ expose for toggle
   };
+}
+
+// ======= 贴图开关应用函数（地面/墙/脸/金币） =======
+function applyTextureToggle() {
+  if (window.USE_TEXTURES) {
+    plane.material = groundMatTextured;
+    wallNorth.material = wallMatTextured;
+    wallSouth.material = wallMatTextured;
+    wallEast.material = wallMatTextured;
+    wallWest.material = wallMatTextured;
+    if (facePlaneRef) facePlaneRef.visible = true;
+  } else {
+    plane.material = groundMatPlain;
+    wallNorth.material = wallMatPlain;
+    wallSouth.material = wallMatPlain;
+    wallEast.material = wallMatPlain;
+    wallWest.material = wallMatPlain;
+    if (facePlaneRef) facePlaneRef.visible = false;
+  }
+
+  // ✅ also convert coins already on the ground
+  setCoinTextureEnabled(!!window.USE_TEXTURES);
+}
+
+if (textureBtn) {
+  textureBtn.addEventListener("click", () => {
+    window.USE_TEXTURES = !window.USE_TEXTURES;
+    textureBtn.textContent = window.USE_TEXTURES ? "Textures: ON" : "Textures: OFF";
+    applyTextureToggle();
+  });
 }
 
 // ======= 玩家血量 / UI =======
@@ -430,16 +534,13 @@ updateHPDisplay();
 // ======= 翻滚机制 & 移速 =======
 const BASE_MOVE_SPEED = 0.6;
 let currentMoveSpeed = BASE_MOVE_SPEED;
-
-// ⭐ 作弊用移动速度倍率（1.0 = 默认）
 let moveSpeedCheatMultiplier = 1.0;
 
 const ROLL_SPEED_MULTIPLIER = 2;
-const ROLL_DURATION = 300; // ms
+const ROLL_DURATION = 300;
 
-// ⭐ 翻滚 CD 支持被 BUFF 修改
-const BASE_ROLL_COOLDOWN = 5000; // ms，基础冷却 5 秒
-const MIN_ROLL_COOLDOWN = 1000; // ms，最小冷却 1 秒
+const BASE_ROLL_COOLDOWN = 5000;
+const MIN_ROLL_COOLDOWN = 1000;
 let currentRollCooldown = BASE_ROLL_COOLDOWN;
 
 let isRolling = false;
@@ -447,9 +548,7 @@ let rollEndTime = 0;
 let lastRollTime = -Infinity;
 
 function startRoll() {
-  if (!isGameStarted || isGameOver || getIsWaveComplete() || isShopOpen()) {
-    return;
-  }
+  if (!isGameStarted || isGameOver || getIsWaveComplete() || isShopOpen()) return;
   const now = performance.now();
   if (now - lastRollTime < currentRollCooldown) return;
   if (isRolling && now < rollEndTime) return;
@@ -470,49 +569,38 @@ function updateRollCDDisplay() {
   }
 }
 
-// ⭐ 供 BUFF 使用：每次调用冷却 -0.5s，但不会低于 1s
 function upgradeRollCooldownBuff() {
-  currentRollCooldown = Math.max(
-    MIN_ROLL_COOLDOWN,
-    currentRollCooldown - 500 // 0.5 秒
-  );
-  console.log("[BUFF] roll CD upgraded, current:", currentRollCooldown, "ms");
+  currentRollCooldown = Math.max(MIN_ROLL_COOLDOWN, currentRollCooldown - 500);
 }
-
-// ⭐ 供商店检查上限：返回当前冷却时间（毫秒）
 function getCurrentRollCooldownMs() {
   return currentRollCooldown;
 }
 
-// ======= Game Over 逻辑 =======
+// ======= Game Over =======
 function triggerGameOver() {
   if (isGameOver) return;
   isGameOver = true;
   if (playerHP < 0) playerHP = 0;
   updateHPDisplay();
+  AudioMgr.stopBgm();
   gameOverOverlay.style.display = "flex";
 }
 
-// ======= 重置公共状态（用于 Start / Restart） =======
+// ======= 重置公共状态 =======
 function resetCommonState() {
-  // 敌人 & 子弹 & 金币
   resetEnemies(scene);
   resetCombatState(scene);
   resetCoins(scene);
 
-  // 玩家
   player.position.set(0, 1, 0);
   player.rotation.set(0, 0, 0);
 
-  // 相机
   cameraAngle = Math.PI / 4;
 
-  // 血量
   playerMaxHP = 10;
   playerHP = 10;
   updateHPDisplay();
 
-  // 翻滚
   currentMoveSpeed = BASE_MOVE_SPEED * moveSpeedCheatMultiplier;
   isRolling = false;
   rollEndTime = 0;
@@ -520,26 +608,28 @@ function resetCommonState() {
   currentRollCooldown = BASE_ROLL_COOLDOWN;
   updateRollCDDisplay();
 
-  // ⭐ 弹速 BUFF 重置
   window.projectileSpeedMultiplier = 1.0;
 
-  // ⭐ 暴击率重置：基础 10%
-  window.critChance = 0.1;
+  if (typeof window.critChance !== "number") window.critChance = 0.1;
+  else window.critChance = 0.1;
 
-  // 商店 / 安全波次场景
   resetShop();
   shopGroup.visible = false;
 
-  // 金币 UI 数值重置
   setCoinCount(0);
 
-  // 动画相位重置
   walkPhase = 0;
   updateWalkAnimation(false);
+
+  // make sure current toggle is applied after reset
+  applyTextureToggle();
 }
 
 // ======= Restart =======
 function restartGame() {
+  AudioMgr.initOnce();
+  AudioMgr.startBgm();
+
   resetCommonState();
 
   const now = performance.now();
@@ -551,13 +641,15 @@ function restartGame() {
   waveCompleteOverlay.style.display = "none";
   startOverlay.style.display = "none";
 }
-
 restartBtn.addEventListener("click", restartGame);
 
 // ======= Start Game =======
 function startGame() {
   if (isGameStarted) return;
 
+  AudioMgr.initOnce();
+  AudioMgr.startBgm();
+
   resetCommonState();
 
   const now = performance.now();
@@ -570,67 +662,44 @@ function startGame() {
   gameOverOverlay.style.display = "none";
   waveCompleteOverlay.style.display = "none";
 }
-
 startBtn.addEventListener("click", startGame);
 
 // ======= 键盘输入 =======
-const keys = {
-  KeyW: false,
-  KeyA: false,
-  KeyS: false,
-  KeyD: false,
-  KeyQ: false,
-  KeyE: false,
-};
+const keys = { KeyW:false, KeyA:false, KeyS:false, KeyD:false, KeyQ:false, KeyE:false };
 
 window.addEventListener("keydown", (e) => {
-  if (e.code in keys) {
-    keys[e.code] = true;
-  }
-  if (e.code === "Space") {
-    startRoll();
-  }
+  if (e.code in keys) keys[e.code] = true;
+
+  if (e.code === "Space") startRoll();
+
   if (e.code === "KeyF") {
     if (getIsSafeWave()) {
-      // 在绿色地毯上：花 10 货币回满血；否则：商店交互
-      if (isPlayerOnHealCarpet()) {
-        tryHealToFull();
-      } else {
-        handleShopInteractInSafeWave(performance.now());
-      }
+      if (isPlayerOnHealCarpet()) tryHealToFull();
+      else handleShopInteractInSafeWave(performance.now());
     }
-  }
-  if (e.code === "KeyN") {
-    devSkipWave();
   }
 
-  // 可选：按 H 键隐藏/显示作弊面板（方便演示）
+  if (e.code === "KeyN") devSkipWave();
+
   if (e.code === "KeyH") {
     const panel = document.getElementById("cheat-panel");
-    if (panel) {
-      panel.style.display = panel.style.display === "none" ? "block" : "none";
-    }
+    if (panel) panel.style.display = panel.style.display === "none" ? "block" : "none";
   }
 });
 
 window.addEventListener("keyup", (e) => {
-  if (e.code in keys) {
-    keys[e.code] = false;
-  }
+  if (e.code in keys) keys[e.code] = false;
 });
 
-// ======= 玩家移动（相对屏幕的 WASD） =======
+// ======= 玩家移动 =======
 function updatePlayerMovement() {
-  // 商店里不动，并且保持站立姿势
   if (isShopOpen()) {
     updateWalkAnimation(false);
     return;
   }
 
   const now = performance.now();
-  if (isRolling && now >= rollEndTime) {
-    isRolling = false;
-  }
+  if (isRolling && now >= rollEndTime) isRolling = false;
 
   const moveCamSpace = new THREE.Vector3();
   if (keys.KeyW) moveCamSpace.z -= 1;
@@ -639,9 +708,7 @@ function updatePlayerMovement() {
   if (keys.KeyD) moveCamSpace.x += 1;
 
   const baseSpeed = BASE_MOVE_SPEED * moveSpeedCheatMultiplier;
-  const speed = isRolling
-    ? baseSpeed * ROLL_SPEED_MULTIPLIER
-    : currentMoveSpeed;
+  const speed = isRolling ? baseSpeed * ROLL_SPEED_MULTIPLIER : currentMoveSpeed;
 
   const isMoving = moveCamSpace.lengthSq() > 0;
 
@@ -649,9 +716,7 @@ function updatePlayerMovement() {
     moveCamSpace.normalize().multiplyScalar(speed);
     moveCamSpace.applyQuaternion(camera.quaternion);
     moveCamSpace.y = 0;
-    if (moveCamSpace.lengthSq() > 0) {
-      moveCamSpace.normalize().multiplyScalar(speed);
-    }
+    if (moveCamSpace.lengthSq() > 0) moveCamSpace.normalize().multiplyScalar(speed);
 
     player.position.add(moveCamSpace);
 
@@ -659,37 +724,27 @@ function updatePlayerMovement() {
     player.position.x = THREE.MathUtils.clamp(player.position.x, -half, half);
     player.position.z = THREE.MathUtils.clamp(player.position.z, -half, half);
 
-  // ✅ 避免玩家穿过商店主体
-  applyShopCollision();
+    applyShopCollision();
   }
 
-  // ✅ 走路动画：移动时摆动四肢，不动时回正
   updateWalkAnimation(isMoving);
 
   const rotateSpeed = Math.PI / 4;
-  if (keys.KeyQ) {
-    cameraAngle += rotateSpeed;
-    keys.KeyQ = false;
-  }
-  if (keys.KeyE) {
-    cameraAngle -= rotateSpeed;
-    keys.KeyE = false;
-  }
+  if (keys.KeyQ) { cameraAngle += rotateSpeed; keys.KeyQ = false; }
+  if (keys.KeyE) { cameraAngle -= rotateSpeed; keys.KeyE = false; }
 }
 
-// ======= 走路动画：移动时触发 =======
+// ======= 走路动画 =======
 function updateWalkAnimation(isMoving) {
   if (!limb) return;
 
   if (!isMoving) {
-    // 不动：慢慢回到站立姿势
     const k = 0.15;
     limb.armPivotL.rotation.x *= 1 - k;
     limb.armPivotR.rotation.x *= 1 - k;
     limb.legPivotL.rotation.x *= 1 - k;
     limb.legPivotR.rotation.x *= 1 - k;
 
-    // 身体/头回正（轻微）
     limb.body.position.y += (1.5 - limb.body.position.y) * 0.2;
     limb.head.position.y += (2.7 - limb.head.position.y) * 0.2;
     limb.body.rotation.z *= 1 - k;
@@ -697,20 +752,16 @@ function updateWalkAnimation(isMoving) {
     return;
   }
 
-  // 移动：推进相位
   walkPhase += 0.18;
 
-  // 手脚摆幅（可调）
   const swing = Math.sin(walkPhase) * 0.8;
   const bob = Math.cos(walkPhase) * 0.06;
 
-  // 手臂与腿对摆
   limb.armPivotL.rotation.x = swing;
   limb.armPivotR.rotation.x = -swing;
   limb.legPivotL.rotation.x = -swing;
   limb.legPivotR.rotation.x = swing;
 
-  // 轻微身体起伏 + 左右摆动（更像走路）
   limb.body.position.y = 1.5 + bob;
   limb.head.position.y = 2.7 + bob * 0.6;
 
@@ -725,10 +776,7 @@ let mouseWorld = new THREE.Vector3();
 let hasMouse = false;
 
 const crosshairGeom = new THREE.RingGeometry(1, 1.4, 32);
-const crosshairMat = new THREE.MeshBasicMaterial({
-  color: 0xffff00,
-  side: THREE.DoubleSide,
-});
+const crosshairMat = new THREE.MeshBasicMaterial({ color: 0xffff00, side: THREE.DoubleSide });
 const crosshair = new THREE.Mesh(crosshairGeom, crosshairMat);
 crosshair.rotation.x = -Math.PI / 2;
 crosshair.visible = false;
@@ -755,7 +803,6 @@ function updateAim() {
 
   raycaster.setFromCamera(mouseNDC, camera);
 
-  // 与地面 y=0 相交
   const origin = raycaster.ray.origin.clone();
   const dir = raycaster.ray.direction.clone();
   const t = (0 - origin.y) / dir.y;
@@ -768,13 +815,11 @@ function updateAim() {
   crosshair.position.set(mouseWorld.x, 0.01, mouseWorld.z);
   crosshair.visible = true;
 
-  // 让玩家朝向鼠标点
   const dx = mouseWorld.x - player.position.x;
   const dz = mouseWorld.z - player.position.z;
   const angle = Math.atan2(dx, dz);
   player.rotation.y = angle;
 
-  // 更新瞄准线
   const points = [
     new THREE.Vector3(player.position.x, player.position.y + 1, player.position.z),
     new THREE.Vector3(mouseWorld.x, player.position.y + 1, mouseWorld.z),
@@ -783,29 +828,19 @@ function updateAim() {
 }
 
 // ======= 鼠标事件交给 combat 模块 =======
-window.addEventListener("mousedown", (e) => {
-  handleMouseDown(e.button);
-});
-window.addEventListener("mouseup", (e) => {
-  handleMouseUp(e.button);
-});
-canvas.addEventListener("mouseleave", () => {
-  handleMouseLeaveCanvas();
-});
+window.addEventListener("mousedown", (e) => handleMouseDown(e.button));
+window.addEventListener("mouseup", (e) => handleMouseUp(e.button));
+canvas.addEventListener("mouseleave", () => handleMouseLeaveCanvas());
 
-// ======= 开发者模式：N 键快进到下一个回合并 +3000 金币 =======
+// ======= 开发者模式：N 键快进 =======
 function devSkipWave() {
   if (!isGameStarted || isGameOver) return;
 
   addCoins(3000);
-
   const now = performance.now();
 
-  if (getIsSafeWave()) {
-    startCombatWaveFromSafe(now);
-  } else {
-    handleNextWaveClick(now);
-  }
+  if (getIsSafeWave()) startCombatWaveFromSafe(now);
+  else handleNextWaveClick(now);
 }
 
 // ======= 自适应 =======
@@ -876,9 +911,7 @@ initShopSystem({
   upgradeCritChance: () => upgradeCritChance(),
   upgradeFireRate: () => upgradeFireRate(),
 
-  onRequestNextWaveFromSafe: (now) => {
-    startCombatWaveFromSafe(now);
-  },
+  onRequestNextWaveFromSafe: (now) => startCombatWaveFromSafe(now),
 });
 
 // 放在全局，方便 combat.js 通过 window 读取
@@ -890,20 +923,16 @@ function upgradeProjectileSpeed() {
   } else {
     window.projectileSpeedMultiplier += 0.05;
   }
-  console.log("[BUFF] 子弹速度提升，当前倍率 =", window.projectileSpeedMultiplier);
 }
 
-// ⭐ 暴击率：放在全局，供 enemies.js 使用
 if (typeof window.critChance !== "number") {
-  window.critChance = 0.1; // 初始 10%
+  window.critChance = 0.1;
 }
 
-// ⭐ 暴击提升：每次 BUFF +10%，最大 100%
 function upgradeCritChance() {
   const current = typeof window.critChance === "number" ? window.critChance : 0.1;
   const next = Math.min(1.0, current + 0.1);
   window.critChance = next;
-  console.log("[BUFF] 暴击率提升，当前暴击率 =", (next * 100).toFixed(0) + "%");
 }
 
 // ======= 战斗模块初始化 =======
@@ -965,8 +994,6 @@ initWaveSystem({
     clearBulletsForWaveChange(scene);
     shopGroup.visible = true;
     healerGroup.visible = true;
-
-    // 进商店强制站立
     updateWalkAnimation(false);
   },
 
@@ -984,35 +1011,27 @@ nextWaveBtn.addEventListener("click", () => {
 });
 
 // ======= 作弊菜单逻辑 =======
-
-// 设置金币
 if (cheatCoinsApplyBtn) {
   cheatCoinsApplyBtn.addEventListener("click", () => {
     if (!cheatCoinsInput) return;
     const v = parseInt(cheatCoinsInput.value, 10);
     if (!Number.isNaN(v)) {
       setCoinCount(v);
-      console.log("[CHEAT] Coins set to", v);
     }
   });
 }
 
-// 设置移动速度倍率（1.0 = 默认）
 if (cheatSpeedApplyBtn) {
   cheatSpeedApplyBtn.addEventListener("click", () => {
     if (!cheatSpeedInput) return;
     const v = parseFloat(cheatSpeedInput.value);
     if (!Number.isNaN(v) && v > 0) {
       moveSpeedCheatMultiplier = v;
-      console.log("[CHEAT] Move speed multiplier set to", v);
-
-      // 立即刷新当前移动速度
       currentMoveSpeed = BASE_MOVE_SPEED * moveSpeedCheatMultiplier;
     }
   });
 }
 
-// 设置当前 HP
 if (cheatHpApplyBtn) {
   cheatHpApplyBtn.addEventListener("click", () => {
     if (!cheatHpInput) return;
@@ -1020,12 +1039,10 @@ if (cheatHpApplyBtn) {
     if (!Number.isNaN(v)) {
       playerHP = Math.max(0, Math.min(playerMaxHP, v));
       updateHPDisplay();
-      console.log("[CHEAT] HP set to", playerHP);
     }
   });
 }
 
-// 跳到下一波
 if (cheatNextWaveBtn) {
   cheatNextWaveBtn.addEventListener("click", () => {
     if (!isGameStarted || isGameOver) return;
@@ -1033,13 +1050,14 @@ if (cheatNextWaveBtn) {
 
     if (getIsSafeWave()) {
       startCombatWaveFromSafe(now);
-      console.log("[CHEAT] Start combat wave from safe wave");
     } else {
-      const result = handleNextWaveClick(now);
-      console.log("[CHEAT] Next wave triggered", result);
+      handleNextWaveClick(now);
     }
   });
 }
+
+// Apply initial toggle state once everything exists
+applyTextureToggle();
 
 // ======= 主循环 =======
 function animate() {
@@ -1073,7 +1091,6 @@ function animate() {
     });
 
     if (!isGameOver) {
-      // 根据减速 BUFF / 安全波次更新 currentMoveSpeed，但保留作弊倍率
       if (isRolling) {
         currentMoveSpeed = BASE_MOVE_SPEED * moveSpeedCheatMultiplier;
       } else if (
@@ -1097,7 +1114,6 @@ function animate() {
     updateCoins(isLastSecond);
   } else {
     updateCamera();
-    // 非战斗/暂停时保持站立
     updateWalkAnimation(false);
   }
 

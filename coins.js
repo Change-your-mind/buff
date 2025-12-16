@@ -1,4 +1,4 @@
-// coins.js
+// coins.js — Cheese Coin + Texture Toggle Support
 import * as THREE from "three";
 
 let scene, player, coinElement;
@@ -10,8 +10,35 @@ const COIN_ATTRACT_RADIUS = 8;
 const COIN_COLLECT_RADIUS = 1.0;
 const COIN_SPEED = 0.4;
 
-const coinGeometry = new THREE.BoxGeometry(0.8, 0.8, 0.8);
-const coinMaterial = new THREE.MeshPhongMaterial({ color: 0xffa500 });
+// ===== Textured (cheese) coin as Sprite =====
+const texLoader = new THREE.TextureLoader();
+const cheeseTex = texLoader.load("./assets/textures/coin.png");
+
+const baseCheeseMat = new THREE.SpriteMaterial({
+  map: cheeseTex,
+  transparent: true,
+  alphaTest: 0.4,
+  color: new THREE.Color(1.0, 0.92, 0.6), // slightly cheesier tint
+});
+
+const BASE_SIZE = 1.3;
+const ROTATE_SPEED = 0.04;
+const PULSE_SPEED = 0.08;
+const PULSE_AMOUNT = 0.15;
+
+// ===== Plain coin as Box =====
+const plainGeom = new THREE.BoxGeometry(0.8, 0.8, 0.8);
+function makePlainMesh() {
+  const mat = new THREE.MeshPhongMaterial({ color: 0xffcc66 });
+  return new THREE.Mesh(plainGeom, mat);
+}
+
+function makeCheeseSprite() {
+  const mat = baseCheeseMat.clone();
+  const s = new THREE.Sprite(mat);
+  s.scale.set(BASE_SIZE, BASE_SIZE, 1);
+  return s;
+}
 
 export function initCoins(sceneRef, playerRef, coinElementRef) {
   scene = sceneRef;
@@ -41,47 +68,88 @@ export function addCoins(amount) {
   updateCoinDisplay();
 }
 
-// 敌人死亡时掉落
-export function spawnCoinAtPosition(pos) {
+// Call from main.js when toggling textures
+export function setCoinTextureEnabled(enabled) {
   if (!scene) return;
-  const coinMesh = new THREE.Mesh(coinGeometry, coinMaterial);
-  coinMesh.position.set(pos.x, 0.5, pos.z);
-  scene.add(coinMesh);
-  coins.push({ mesh: coinMesh });
+
+  for (const c of coins) {
+    const old = c.mesh;
+    const pos = old.position.clone();
+
+    scene.remove(old);
+
+    const newMesh = enabled ? makeCheeseSprite() : makePlainMesh();
+    newMesh.position.copy(pos);
+
+    scene.add(newMesh);
+
+    c.mesh = newMesh;
+    c.isSprite = enabled;
+  }
 }
 
-// 每帧更新金币吸附 & 收集
+// Enemy death drop
+export function spawnCoinAtPosition(pos) {
+  if (!scene) return;
+
+  const useTex = !!window.USE_TEXTURES;
+
+  const mesh = useTex ? makeCheeseSprite() : makePlainMesh();
+  mesh.position.set(pos.x, 0.9, pos.z);
+
+  scene.add(mesh);
+  coins.push({
+    mesh,
+    phase: Math.random() * Math.PI * 2,
+    isSprite: useTex,
+  });
+}
+
+// Per-frame update: attract + collect + (sprite-only animation)
 export function updateCoins(isLastSecond) {
   if (!scene || !player) return;
 
   for (let i = coins.length - 1; i >= 0; i--) {
     const c = coins[i];
-    const cp = c.mesh.position;
+    const mesh = c.mesh;
+    const cp = mesh.position;
 
+    // --- cheese animation (only for sprite mode) ---
+    if (c.isSprite) {
+      c.phase += PULSE_SPEED;
+
+      const pulse = 1 + Math.sin(c.phase) * PULSE_AMOUNT;
+      mesh.scale.set(BASE_SIZE * pulse, BASE_SIZE * pulse, 1);
+
+      // Sprite rotation is on material
+      mesh.material.rotation += ROTATE_SPEED;
+    }
+
+    // --- attract logic ---
     const dx = player.position.x - cp.x;
     const dz = player.position.z - cp.z;
     const distSq = dx * dx + dz * dz;
 
-    // 吸附逻辑
     if (isLastSecond || distSq < COIN_ATTRACT_RADIUS * COIN_ATTRACT_RADIUS) {
       const dist = Math.sqrt(distSq) || 0.0001;
-      const step = COIN_SPEED;
-      cp.x += (dx / dist) * step;
-      cp.z += (dz / dist) * step;
-      cp.y = 0.5;
+      cp.x += (dx / dist) * COIN_SPEED;
+      cp.z += (dz / dist) * COIN_SPEED;
+      cp.y = 0.9;
     }
 
-    // 收集
+    // --- collect ---
     if (distSq < COIN_COLLECT_RADIUS * COIN_COLLECT_RADIUS) {
       coinCount += 1;
       updateCoinDisplay();
-      scene.remove(c.mesh);
+
+      window.__playSfx?.("coin");
+
+      scene.remove(mesh);
       coins.splice(i, 1);
     }
   }
 }
 
-// 波次结束：把场上所有金币直接收集
 export function collectAllCoinsImmediately() {
   if (!scene) return;
   for (let i = coins.length - 1; i >= 0; i--) {
@@ -93,7 +161,6 @@ export function collectAllCoinsImmediately() {
   updateCoinDisplay();
 }
 
-// 重置（用于 Restart）
 export function resetCoins(sceneRef) {
   for (const c of coins) {
     sceneRef.remove(c.mesh);

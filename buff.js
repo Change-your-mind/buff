@@ -38,47 +38,16 @@ export const RARITY_META = {
  */
 function rollRarity() {
   const r = Math.random();
-  if (r < 0.5) return RARITY.LEVEL1;   // 0.00 - 0.50
-  if (r < 0.8) return RARITY.LEVEL2;   // 0.50 - 0.80
-  if (r < 0.97) return RARITY.LEVEL3;  // 0.80 - 0.97
-  return RARITY.LEVEL4;                // 0.97 - 1.00
+  if (r < 0.5) return RARITY.LEVEL1; // 0.00 - 0.50
+  if (r < 0.8) return RARITY.LEVEL2; // 0.50 - 0.80
+  if (r < 0.97) return RARITY.LEVEL3; // 0.80 - 0.97
+  return RARITY.LEVEL4; // 0.97 - 1.00
 }
 
 /**
  * Buff definition pool
  */
 export const BUFF_POOL = [
-  {
-    id: "placeholder_lv1",
-    name: "Placeholder: Tier I Basic Buff",
-    rarity: RARITY.LEVEL1,
-    description: "Tier I placeholder buff used for testing the shop UI.",
-  },
-  {
-    id: "placeholder_lv1_b",
-    name: "Placeholder: Tier I Basic Buff B",
-    rarity: RARITY.LEVEL1,
-    description: "Another Tier I placeholder buff used to test duplicate rolls.",
-  },
-  {
-    id: "placeholder_lv2",
-    name: "Placeholder: Tier II Advanced Buff",
-    rarity: RARITY.LEVEL2,
-    description: "Tier II placeholder buff used for testing mid-tier rarity.",
-  },
-  {
-    id: "placeholder_lv3",
-    name: "Placeholder: Tier III Strong Buff",
-    rarity: RARITY.LEVEL3,
-    description: "Tier III placeholder buff used for testing high rarity.",
-  },
-  {
-    id: "placeholder_lv4",
-    name: "Placeholder: Tier IV Legendary Buff",
-    rarity: RARITY.LEVEL4,
-    description: "Tier IV placeholder buff used for testing legendary rarity.",
-  },
-
   // 🌟 Tier 3 – Scatter Shot
   {
     id: "scatter_lv3",
@@ -167,6 +136,15 @@ export const BUFF_POOL = [
     rarity: RARITY.LEVEL1,
     description:
       "Increases maximum HP: first purchase +5 HP, each later purchase +3 HP, up to a maximum of 30 HP. Does not heal current HP.",
+  },
+
+  // ✅ NEW: 🌟 Tier 1 – Base Damage Up
+  {
+    id: "base_dmg_lv1",
+    name: "Base Damage Up",
+    rarity: RARITY.LEVEL1,
+    description:
+      "Increases your base damage by +1. Stacks without limit. Affects all projectile types and upgrades.",
   },
 
   // 🌟 Tier 1 – Roll Cooldown Reduction
@@ -273,24 +251,6 @@ export function formatBuffText(buff) {
 
 /**
  * Entry point: apply a buff’s effect to the game.
- *
- * gameCtx currently may include (optionally):
- * - player: THREE.Mesh (player model)
- * - scene: THREE.Scene
- * - coinCount: current coin count (by value, read-only)
- * - hp: current HP (by value, read-only)
- * - ownedBuffs: array of already owned buffs
- * - addCoins(amount)
- * - addHP(amount)
- * - increaseMaxHP(delta, cap)
- * - getScatterBulletCount()
- * - upgradeScatter()
- * - upgradeRicochet()
- * - upgradeRocket()
- * - upgradeSticky()
- * - upgradeBleed()
- * - upgradeSlow()
- * - upgradeRollCooldown()
  */
 export function applyBuffToGame(buff, gameCtx) {
   console.log("[BUFF] applyBuffToGame", buff);
@@ -341,7 +301,6 @@ export function applyBuffToGame(buff, gameCtx) {
     }
 
     case "fire_lv2": {
-      // Flame rounds: change projectile visuals + enemy flame trail logic
       if (typeof gameCtx.upgradeFireBullet === "function") {
         gameCtx.upgradeFireBullet();
       }
@@ -367,21 +326,25 @@ export function applyBuffToGame(buff, gameCtx) {
 
     case "maxhp_lv1": {
       if (typeof gameCtx.increaseMaxHP === "function") {
-        // Number of times this buff has been purchased (including this time)
         const times =
           gameCtx.ownedBuffs?.filter((b) => b.id === "maxhp_lv1").length ?? 1;
 
         const MAX_CAP = 30;
         let delta;
 
-        // First time +5, afterwards +3 each time
-        if (times === 1) {
-          delta = 5;
-        } else {
-          delta = 3;
-        }
+        if (times === 1) delta = 5;
+        else delta = 3;
+
         gameCtx.increaseMaxHP(delta, MAX_CAP);
       }
+      break;
+    }
+
+    // ✅ NEW: Base Damage Up (Tier 1) — no other file changes required
+    case "base_dmg_lv1": {
+      if (typeof window.baseDamageBonus !== "number") window.baseDamageBonus = 0;
+      window.baseDamageBonus += 1;
+      console.log("[BUFF] Base damage bonus =", window.baseDamageBonus);
       break;
     }
 
@@ -406,7 +369,6 @@ export function applyBuffToGame(buff, gameCtx) {
       break;
     }
 
-    // ⭐ New: Critical Boost buff
     case "crit_lv1": {
       if (typeof gameCtx.upgradeCritChance === "function") {
         gameCtx.upgradeCritChance();
@@ -415,7 +377,6 @@ export function applyBuffToGame(buff, gameCtx) {
     }
 
     default:
-      // Placeholder / not-yet-implemented buffs
       break;
   }
 }
