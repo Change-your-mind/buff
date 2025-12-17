@@ -609,6 +609,8 @@ function resetCommonState() {
   updateRollCDDisplay();
 
   window.projectileSpeedMultiplier = 1.0;
+  window.baseDamageBonus = 0;
+
 
   if (typeof window.critChance !== "number") window.critChance = 0.1;
   else window.critChance = 0.1;
